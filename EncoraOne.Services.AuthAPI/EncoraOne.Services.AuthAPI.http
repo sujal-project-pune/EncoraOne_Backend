@@ -1,0 +1,6 @@
+@EncoraOne.Services.AuthAPI_HostAddress = http://localhost:5287
+
+GET {{EncoraOne.Services.AuthAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
