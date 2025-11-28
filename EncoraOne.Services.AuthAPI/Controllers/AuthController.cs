@@ -17,7 +17,7 @@ namespace EncoraOne.Grievance.API.Controllers
             _authService = authService;
         }
 
-        // POST: api/Auth/register
+        // POST: api/Auth/registeruser
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserDto registerDto)
         {
