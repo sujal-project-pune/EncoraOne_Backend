@@ -45,4 +45,24 @@ namespace EncoraOne.Grievance.API.DTOs
         public int UserId { get; set; }
         public int? DepartmentId { get; set; } // Added this field
     }
+    public class ForgotPasswordDto
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; }
+    }
+
+    public class ResetPasswordDto
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } // Needed to identify user
+
+        [Required]
+        public string Otp { get; set; } // The 6-digit code
+
+        [Required]
+        [MinLength(6)]
+        public string NewPassword { get; set; }
+    }
 }

@@ -12,6 +12,7 @@ using EncoraOne.Grievance.API.Repositories.Interfaces;
 using EncoraOne.Grievance.API.Services.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.EntityFrameworkCore; // Required for EF Core Async methods
 
 namespace EncoraOne.Grievance.API.Services.Implementations
 {
@@ -33,10 +34,7 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                 throw new Exception("User with this email already exists.");
             }
 
-            using var hmac = new HMACSHA512();
-            string passwordHash = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(registerDto.Password)));
-            string passwordSalt = Convert.ToBase64String(hmac.Key);
-            string storedPassword = $"{passwordSalt}.{passwordHash}";
+            string storedPassword = HashPassword(registerDto.Password);
 
             User newUser;
 
@@ -51,7 +49,6 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                     JobTitle = registerDto.JobTitle ?? "Manager"
                 };
             }
-
             else if (registerDto.Role == UserRole.Employee)
             {
                 newUser = new Employee
@@ -59,9 +56,9 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                     JobTitle = registerDto.JobTitle ?? "Staff"
                 };
             }
-            else 
+            else
             {
-                newUser = new Manager { DepartmentId = 1 }; // Admin default
+                newUser = new Manager { DepartmentId = 1 }; // Admin default (Administration Dept)
             }
 
             newUser.FullName = registerDto.FullName;
@@ -72,7 +69,7 @@ namespace EncoraOne.Grievance.API.Services.Implementations
 
             if (newUser is Manager m) await _unitOfWork.Managers.AddAsync(m);
             else if (newUser is Employee e) await _unitOfWork.Employees.AddAsync(e);
-            
+
             await _unitOfWork.CompleteAsync();
 
             return GenerateTokenResponse(newUser);
@@ -110,6 +107,92 @@ namespace EncoraOne.Grievance.API.Services.Implementations
             return false;
         }
 
+        // ==========================================
+        // NEW: Forgot Password (OTP Generation)
+        // ==========================================
+        public async Task<string> ForgotPasswordAsync(string email)
+        {
+            // 1. Find User (Check both tables)
+            var emp = (await _unitOfWork.Employees.FindAsync(e => e.Email == email)).FirstOrDefault();
+            User user = emp;
+
+            if (user == null)
+            {
+                var mgr = (await _unitOfWork.Managers.FindAsync(m => m.Email == email)).FirstOrDefault();
+                user = mgr;
+            }
+
+            if (user == null) throw new Exception("User not found.");
+
+            // 2. Generate 6 Digit Random OTP
+            string otp = new Random().Next(100000, 999999).ToString();
+
+            // 3. Save OTP to DB
+            user.ResetToken = otp;
+            user.ResetTokenExpires = DateTime.UtcNow.AddMinutes(15); // Valid for 15 mins
+
+            // Update specific repository
+            if (user is Employee e) _unitOfWork.Employees.Update(e);
+            else if (user is Manager m) _unitOfWork.Managers.Update(m);
+
+            await _unitOfWork.CompleteAsync();
+
+            return otp;
+        }
+
+        // ==========================================
+        // NEW: Reset Password (OTP Verification)
+        // ==========================================
+        public async Task<bool> ResetPasswordAsync(ResetPasswordDto resetDto)
+        {
+            // 1. Find User
+            var emp = (await _unitOfWork.Employees.FindAsync(u => u.Email == resetDto.Email)).FirstOrDefault();
+            User user = emp;
+
+            if (user == null)
+            {
+                var mgr = (await _unitOfWork.Managers.FindAsync(u => u.Email == resetDto.Email)).FirstOrDefault();
+                user = mgr;
+            }
+
+            if (user == null) throw new Exception("User not found.");
+
+            // 2. Verify OTP
+            if (user.ResetToken != resetDto.Otp) throw new Exception("Invalid OTP.");
+            if (!user.ResetTokenExpires.HasValue || user.ResetTokenExpires < DateTime.UtcNow)
+                throw new Exception("OTP has expired.");
+
+            // 3. Update Password
+            user.PasswordHash = HashPassword(resetDto.NewPassword);
+
+            // 4. Clear Token
+            user.ResetToken = null;
+            user.ResetTokenExpires = null;
+
+            if (user is Employee e) _unitOfWork.Employees.Update(e);
+            else if (user is Manager m) _unitOfWork.Managers.Update(m);
+
+            await _unitOfWork.CompleteAsync();
+
+            return true;
+        }
+
+        // Changed return type to string to match Interface and usage
+        public string HashPassword(string password)
+        {
+            using var hmac = new HMACSHA512();
+
+            // Calculate the hash
+            byte[] computedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(password));
+
+            // Convert to base64 strings
+            string passwordHash = Convert.ToBase64String(computedHash);
+            string passwordSalt = Convert.ToBase64String(hmac.Key);
+
+            // Combine salt and hash
+            return $"{passwordSalt}.{passwordHash}";
+        }
+
         private bool VerifyPasswordHash(string password, string storedPassword)
         {
             var parts = storedPassword.Split('.');
@@ -127,17 +210,16 @@ namespace EncoraOne.Grievance.API.Services.Implementations
         {
             var tokenHandler = new JwtSecurityTokenHandler();
             var key = Encoding.ASCII.GetBytes(_configuration["JwtSettings:Key"]);
-            
+
             int? deptId = (user as Manager)?.DepartmentId;
 
             var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
-                // FIX: Add Name Claim so it persists in Token
-                new Claim(ClaimTypes.Name, user.FullName), 
-                new Claim(ClaimTypes.Role, user.Role.ToString()), 
-                new Claim("role", user.Role.ToString()) 
+                new Claim(ClaimTypes.Name, user.FullName), // Important for frontend display
+                new Claim(ClaimTypes.Role, user.Role.ToString()),
+                new Claim("role", user.Role.ToString())
             };
 
             if (deptId.HasValue)
@@ -165,22 +247,6 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                 UserId = user.Id,
                 DepartmentId = deptId
             };
-        }
-
-        public object HashPassword(string password)
-        {
-            // Use a new HMACSHA512 to generate a unique, random salt (stored in hmac.Key)
-            using var hmac = new HMACSHA512();
-
-            // Calculate the hash
-            byte[] computedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(password));
-
-            // Convert to base64 strings for storage
-            string passwordHash = Convert.ToBase64String(computedHash);
-            string passwordSalt = Convert.ToBase64String(hmac.Key);
-
-            // Combine salt and hash into a single string for storage
-            return $"{passwordSalt}.{passwordHash}";
         }
     }
 }

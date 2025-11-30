@@ -46,5 +46,35 @@ namespace EncoraOne.Grievance.API.Controllers
                 return Unauthorized(new { message = ex.Message });
             }
         }
+        // NEW: Forgot Password (Returns OTP)
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto forgotDto)
+        {
+            try
+            {
+                var otp = await _authService.ForgotPasswordAsync(forgotDto.Email);
+                // Return OTP so frontend can send it via EmailJS
+                return Ok(new { token = otp, message = "OTP generated successfully." });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // NEW: Reset Password (Verifies OTP)
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto resetDto)
+        {
+            try
+            {
+                await _authService.ResetPasswordAsync(resetDto);
+                return Ok(new { message = "Password has been reset successfully." });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
     }
 }

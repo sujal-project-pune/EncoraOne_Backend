@@ -26,6 +26,11 @@ namespace EncoraOne.Grievance.API.Models
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public bool IsActive { get; set; } = true;
-     
+
+        // ==========================================
+        // NEW FIELDS FOR OTP PASSWORD RESET
+        // ==========================================
+        public string? ResetToken { get; set; } // Stores the 6-digit OTP
+        public DateTime? ResetTokenExpires { get; set; } // Stores expiration time
     }
 }
