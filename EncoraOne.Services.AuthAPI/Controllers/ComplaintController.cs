@@ -20,6 +20,7 @@ namespace EncoraOne.Grievance.API.Controllers
             _complaintService = complaintService;
         }
 
+        // REVERTED: FromForm -> FromBody (No file upload)
         [HttpPost]
         [Authorize(Roles = "Employee")]
         public async Task<IActionResult> CreateComplaint([FromBody] CreateComplaintDto createDto)
@@ -29,40 +30,6 @@ namespace EncoraOne.Grievance.API.Controllers
                 var userId = GetCurrentUserId();
                 var result = await _complaintService.CreateComplaintAsync(createDto, userId);
                 return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
-        // NEW: Edit Endpoint
-        [HttpPut("{id}")]
-        [Authorize(Roles = "Employee")]
-        public async Task<IActionResult> EditComplaint(int id, [FromBody] CreateComplaintDto editDto)
-        {
-            try
-            {
-                var userId = GetCurrentUserId();
-                await _complaintService.EditComplaintAsync(id, editDto, userId);
-                return Ok(new { message = "Complaint updated successfully" });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
-        // NEW: Cancel Endpoint
-        [HttpDelete("{id}")]
-        [Authorize(Roles = "Employee")]
-        public async Task<IActionResult> CancelComplaint(int id)
-        {
-            try
-            {
-                var userId = GetCurrentUserId();
-                await _complaintService.CancelComplaintAsync(id, userId);
-                return Ok(new { message = "Complaint cancelled successfully" });
             }
             catch (Exception ex)
             {
@@ -102,8 +69,40 @@ namespace EncoraOne.Grievance.API.Controllers
             try
             {
                 var managerId = GetCurrentUserId();
-                await _complaintService.UpdateComplaintStatusAsync(updateDto, managerId);
+                var result = await _complaintService.UpdateComplaintStatusAsync(updateDto, managerId);
                 return Ok(new { message = "Status updated successfully" });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+        
+        [HttpPut("{id}")]
+        [Authorize(Roles = "Employee")]
+        public async Task<IActionResult> EditComplaint(int id, [FromBody] CreateComplaintDto editDto)
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                await _complaintService.EditComplaintAsync(id, editDto, userId);
+                return Ok(new { message = "Complaint updated successfully" });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "Employee")]
+        public async Task<IActionResult> CancelComplaint(int id)
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                await _complaintService.CancelComplaintAsync(id, userId);
+                return Ok(new { message = "Complaint cancelled successfully" });
             }
             catch (Exception ex)
             {

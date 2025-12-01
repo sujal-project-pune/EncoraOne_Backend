@@ -7,6 +7,7 @@ using EncoraOne.Grievance.API.Repositories.Interfaces;
 using EncoraOne.Grievance.API.Services.Interfaces;
 using Microsoft.AspNetCore.SignalR;
 using EncoraOne.Grievance.API.Hubs;
+using Microsoft.AspNetCore.Hosting; // Kept if you are using file upload, otherwise can be removed
 
 namespace EncoraOne.Grievance.API.Services.Implementations
 {
@@ -42,8 +43,9 @@ namespace EncoraOne.Grievance.API.Services.Implementations
 
             var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId);
 
-            // Notify Managers
-            await _hubContext.Clients.All.SendAsync("ReceiveNotification", $"New Grievance: {complaint.Title} submitted to {department.Name}.");
+            // REVERTED: Send only the message string
+            await _hubContext.Clients.All.SendAsync("ReceiveNotification",
+                $"New Grievance: {complaint.Title} submitted to {department.Name}.");
 
             return MapToResponse(complaint, department.Name, employee.FullName);
         }
@@ -87,7 +89,7 @@ namespace EncoraOne.Grievance.API.Services.Implementations
             _unitOfWork.Complaints.Update(complaint);
             await _unitOfWork.CompleteAsync();
 
-            // === NOTIFICATION TRIGGER ===
+            // REVERTED: Send only the message string
             await _hubContext.Clients.All.SendAsync("ReceiveNotification",
                 $"Update: Complaint #{complaint.ComplaintId} status changed from {oldStatus} to {complaint.Status}.");
 
@@ -97,10 +99,8 @@ namespace EncoraOne.Grievance.API.Services.Implementations
         public async Task<bool> EditComplaintAsync(int complaintId, CreateComplaintDto editDto, int employeeId)
         {
             var complaint = await _unitOfWork.Complaints.GetByIdAsync(complaintId);
-            if (complaint == null || complaint.EmployeeId != employeeId) throw new Exception("Unauthorized or Not Found");
-
-            if (complaint.Status != ComplaintStatus.Pending)
-                throw new Exception("Cannot edit processed complaint.");
+            if (complaint == null || complaint.EmployeeId != employeeId) throw new Exception("Unauthorized");
+            if (complaint.Status != ComplaintStatus.Pending) throw new Exception("Cannot edit processed complaint.");
 
             complaint.Title = editDto.Title;
             complaint.Description = editDto.Description;
@@ -114,10 +114,8 @@ namespace EncoraOne.Grievance.API.Services.Implementations
         public async Task<bool> CancelComplaintAsync(int complaintId, int employeeId)
         {
             var complaint = await _unitOfWork.Complaints.GetByIdAsync(complaintId);
-            if (complaint == null || complaint.EmployeeId != employeeId) throw new Exception("Unauthorized or Not Found");
-
-            if (complaint.Status != ComplaintStatus.Pending)
-                throw new Exception("Cannot cancel processed complaint.");
+            if (complaint == null || complaint.EmployeeId != employeeId) throw new Exception("Unauthorized");
+            if (complaint.Status != ComplaintStatus.Pending) throw new Exception("Cannot cancel processed complaint.");
 
             complaint.Status = ComplaintStatus.Cancelled;
             _unitOfWork.Complaints.Update(complaint);
@@ -149,7 +147,8 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                 ResolvedAt = c.ResolvedAt,
                 ManagerRemarks = c.ManagerRemarks,
                 DepartmentName = deptName ?? "Unknown",
-                EmployeeName = empName ?? "Unknown"
+                EmployeeName = empName ?? "Unknown",
+                AttachmentUrl = c.AttachmentUrl
             };
         }
     }

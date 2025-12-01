@@ -16,6 +16,9 @@ namespace EncoraOne.Grievance.API.Data
         public DbSet<Department> Departments { get; set; }
         public DbSet<Complaint> Complaints { get; set; }
 
+
+        public DbSet<ComplaintComment> ComplaintComments { get; set; } // NEW
+
         // 🚨 CRITICAL FIX: The base User class MUST be a DbSet<User> 
         // to enable generic queries (like in AdminService.cs) and to properly
         // set up the TPT inheritance mapping.

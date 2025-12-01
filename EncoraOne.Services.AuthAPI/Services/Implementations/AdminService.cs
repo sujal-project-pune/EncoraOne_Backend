@@ -3,6 +3,10 @@ using EncoraOne.Grievance.API.Models;
 using EncoraOne.Grievance.API.Data;
 using EncoraOne.Grievance.API.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using System.Threading.Tasks;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Grievance.API.Services.Implementations
 {
@@ -17,146 +21,78 @@ namespace Grievance.API.Services.Implementations
             _authService = authService;
         }
 
-        // --- GET USER BY EMAIL ---
         public async Task<object?> GetUserByEmailAsync(string email)
         {
-            // The use of _context.Set<User>() is correct for TPT inheritance.
-            var user = await _context.Set<User>()
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower());
+            var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email);
+            if (user == null) return null;
+            return await MapUserDetails(user);
+        }
 
-            if (user == null)
+        // NEW: Get All Users
+        public async Task<IEnumerable<object>> GetAllUsersAsync()
+        {
+            var users = await _context.Users.AsNoTracking().ToListAsync();
+            var result = new List<object>();
+
+            foreach (var user in users)
             {
-                return null;
+                result.Add(await MapUserDetails(user));
             }
+            return result;
+        }
 
-            var userDto = new
+        private async Task<object> MapUserDetails(User user)
+        {
+            var manager = await _context.Managers.AsNoTracking().FirstOrDefaultAsync(m => m.Id == user.Id);
+            var employee = await _context.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == user.Id);
+
+            return new
             {
                 user.Id,
                 user.FullName,
                 user.Email,
                 Role = (int)user.Role,
                 user.IsActive,
-
-                // 💡 REFINEMENT: Ensure you handle cases where jobTitle/DepartmentId might 
-                // be null, especially if the user is an Admin (which is a Manager in your seed data).
-                // The current pattern matching is correct.
-                JobTitle = user is Employee employee ? employee.JobTitle :
-                           user is Manager manager1 ? manager1.JobTitle : null,
-
-                DepartmentId = user is Manager manager2 ? manager2.DepartmentId : (int?)null
+                JobTitle = manager?.JobTitle ?? employee?.JobTitle,
+                DepartmentId = manager?.DepartmentId
             };
-
-            return userDto;
         }
 
-        // --- UPDATE USER ---
         public async Task UpdateUserAsync(UpdateUserDto updateDto)
         {
-            var userToUpdate = await _context.Set<User>()
-           .FirstOrDefaultAsync(u => u.Id == updateDto.Id);
+            var userToUpdate = await _context.Users.FirstOrDefaultAsync(u => u.Id == updateDto.Id);
+            if (userToUpdate == null) throw new ArgumentException("User not found");
 
-            if (userToUpdate == null)
-            {
-                throw new ArgumentException($"User with ID {updateDto.Id} not found.");
-            }
+            if (!string.IsNullOrWhiteSpace(updateDto.FullName)) userToUpdate.FullName = updateDto.FullName;
+            if (!string.IsNullOrWhiteSpace(updateDto.Email)) userToUpdate.Email = updateDto.Email;
+            if (updateDto.IsActive.HasValue) userToUpdate.IsActive = updateDto.IsActive.Value;
 
-            // --- Core Updates: Only apply changes if the DTO provides a value ---
-
-            // 2. Update common base properties (if provided)
-            if (!string.IsNullOrWhiteSpace(updateDto.FullName))
-            {
-                userToUpdate.FullName = updateDto.FullName;
-            }
-
-            if (!string.IsNullOrWhiteSpace(updateDto.Email))
-            {
-                userToUpdate.Email = updateDto.Email;
-            }
-
-            if (updateDto.IsActive.HasValue)
-            {
-                userToUpdate.IsActive = updateDto.IsActive.Value;
-            }
-
-            // 3. Handle Password update (if provided)
             if (!string.IsNullOrWhiteSpace(updateDto.Password))
             {
-                // Use the authentication service to hash the new password
-                userToUpdate.PasswordHash = (string)_authService.HashPassword(updateDto.Password);
+                userToUpdate.PasswordHash = _authService.HashPassword(updateDto.Password);
             }
 
-            // 4. Handle Role and Department ID/JobTitle updates based on DTO and current type
+            if (updateDto.Role.HasValue) userToUpdate.Role = (UserRole)updateDto.Role.Value;
 
-            // --- A. Handle Role Change ---
-            if (updateDto.Role.HasValue)
+            if (userToUpdate is Manager manager)
             {
-                var newRole = (UserRole)updateDto.Role.Value;
-                userToUpdate.Role = newRole; // Update the role on the base entity
-
-                // If changing to Manager, ensure DepartmentId is set
-                if (newRole == UserRole.Manager)
-                {
-                    if (userToUpdate is Manager manager)
-                    {
-                        // Update DepartmentId if a value is provided in the DTO
-                        if (updateDto.DepartmentId.HasValue)
-                        {
-                            manager.DepartmentId = updateDto.DepartmentId.Value;
-                        }
-                        // Validation should prevent null DepartmentId if required for Manager.
-                    }
-                }
-                else // Switching away from Manager (e.g., to Employee or Admin)
-                {
-                    // Clear Manager-specific property (DepartmentId)
-                    if (userToUpdate is Manager manager)
-                    {
-                        manager.DepartmentId = 0; // Assuming 0 or another default value
-                    }
-                }
+                if (updateDto.DepartmentId.HasValue) manager.DepartmentId = updateDto.DepartmentId.Value;
+                if (!string.IsNullOrWhiteSpace(updateDto.JobTitle)) manager.JobTitle = updateDto.JobTitle;
             }
-
-            // --- B. Handle JobTitle Update (for Employee or Manager) ---
-            if (!string.IsNullOrWhiteSpace(updateDto.JobTitle))
+            else if (userToUpdate is Employee employee)
             {
-                if (userToUpdate is Employee employee)
-                {
-                    employee.JobTitle = updateDto.JobTitle;
-                }
-                else if (userToUpdate is Manager manager)
-                {
-                    manager.JobTitle = updateDto.JobTitle;
-                }
-                // Admin is not a derived type here, so we only handle Employee/Manager
+                if (!string.IsNullOrWhiteSpace(updateDto.JobTitle)) employee.JobTitle = updateDto.JobTitle;
             }
 
-            // --- C. Handle DepartmentId Update (if Role was NOT changed, but property was provided) ---
-            // This handles updates to an existing Manager's DepartmentId without a role change
-            if (!updateDto.Role.HasValue && userToUpdate is Manager existingManager && updateDto.DepartmentId.HasValue)
-            {
-                existingManager.DepartmentId = updateDto.DepartmentId.Value;
-            }
-
-            // 5. Save changes
             await _context.SaveChangesAsync();
         }
 
-        // --- DELETE USER ---
         public async Task<bool> DeleteUserAsync(int id)
         {
-            var userToDelete = await _context.Set<User>().FindAsync(id);
-
-            if (userToDelete == null)
-            {
-                return false;
-            }
-
-            _context.Set<User>().Remove(userToDelete);
-            // This correctly removes the entity from the base table and cascade deletes 
-            // from the derived table in TPT.
+            var user = await _context.Users.FindAsync(id);
+            if (user == null) return false;
+            _context.Users.Remove(user);
             await _context.SaveChangesAsync();
-
             return true;
         }
     }

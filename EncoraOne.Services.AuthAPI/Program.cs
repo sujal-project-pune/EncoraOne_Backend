@@ -26,6 +26,7 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IComplaintService, ComplaintService>();
 builder.Services.AddScoped<IAdminService, AdminService>();
+builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 
 // 4. CORS (Allow Credentials for SignalR)
 builder.Services.AddCors(options =>
