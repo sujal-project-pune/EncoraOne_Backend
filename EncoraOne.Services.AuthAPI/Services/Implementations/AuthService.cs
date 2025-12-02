@@ -12,7 +12,7 @@ using EncoraOne.Grievance.API.Repositories.Interfaces;
 using EncoraOne.Grievance.API.Services.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.EntityFrameworkCore; // Required for EF Core Async methods
+using Microsoft.EntityFrameworkCore;
 
 namespace EncoraOne.Grievance.API.Services.Implementations
 {
@@ -34,10 +34,12 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                 throw new Exception("User with this email already exists.");
             }
 
+            // HashPassword now returns string correctly
             string storedPassword = HashPassword(registerDto.Password);
 
             User newUser;
 
+            // 1. Handle Manager
             if (registerDto.Role == UserRole.Manager)
             {
                 if (!registerDto.DepartmentId.HasValue)
@@ -49,6 +51,7 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                     JobTitle = registerDto.JobTitle ?? "Manager"
                 };
             }
+            // 2. Handle Employee
             else if (registerDto.Role == UserRole.Employee)
             {
                 newUser = new Employee
@@ -56,9 +59,16 @@ namespace EncoraOne.Grievance.API.Services.Implementations
                     JobTitle = registerDto.JobTitle ?? "Staff"
                 };
             }
+            // 3. Handle Admin (FIXED: Added JobTitle)
             else
             {
-                newUser = new Manager { DepartmentId = 1 }; // Admin default (Administration Dept)
+                // Admin is stored as a Manager with DeptId 1 (Administration)
+                newUser = new Manager
+                {
+                    DepartmentId = 1,
+                    // FIX: Assign JobTitle to prevent SQL Null Error
+                    JobTitle = registerDto.JobTitle ?? "System Administrator"
+                };
             }
 
             newUser.FullName = registerDto.FullName;
@@ -107,12 +117,8 @@ namespace EncoraOne.Grievance.API.Services.Implementations
             return false;
         }
 
-        // ==========================================
-        // NEW: Forgot Password (OTP Generation)
-        // ==========================================
         public async Task<string> ForgotPasswordAsync(string email)
         {
-            // 1. Find User (Check both tables)
             var emp = (await _unitOfWork.Employees.FindAsync(e => e.Email == email)).FirstOrDefault();
             User user = emp;
 
@@ -124,14 +130,11 @@ namespace EncoraOne.Grievance.API.Services.Implementations
 
             if (user == null) throw new Exception("User not found.");
 
-            // 2. Generate 6 Digit Random OTP
             string otp = new Random().Next(100000, 999999).ToString();
 
-            // 3. Save OTP to DB
             user.ResetToken = otp;
-            user.ResetTokenExpires = DateTime.UtcNow.AddMinutes(15); // Valid for 15 mins
+            user.ResetTokenExpires = DateTime.UtcNow.AddMinutes(15);
 
-            // Update specific repository
             if (user is Employee e) _unitOfWork.Employees.Update(e);
             else if (user is Manager m) _unitOfWork.Managers.Update(m);
 
@@ -140,12 +143,8 @@ namespace EncoraOne.Grievance.API.Services.Implementations
             return otp;
         }
 
-        // ==========================================
-        // NEW: Reset Password (OTP Verification)
-        // ==========================================
         public async Task<bool> ResetPasswordAsync(ResetPasswordDto resetDto)
         {
-            // 1. Find User
             var emp = (await _unitOfWork.Employees.FindAsync(u => u.Email == resetDto.Email)).FirstOrDefault();
             User user = emp;
 
@@ -157,15 +156,12 @@ namespace EncoraOne.Grievance.API.Services.Implementations
 
             if (user == null) throw new Exception("User not found.");
 
-            // 2. Verify OTP
             if (user.ResetToken != resetDto.Otp) throw new Exception("Invalid OTP.");
             if (!user.ResetTokenExpires.HasValue || user.ResetTokenExpires < DateTime.UtcNow)
                 throw new Exception("OTP has expired.");
 
-            // 3. Update Password
             user.PasswordHash = HashPassword(resetDto.NewPassword);
 
-            // 4. Clear Token
             user.ResetToken = null;
             user.ResetTokenExpires = null;
 
@@ -177,19 +173,16 @@ namespace EncoraOne.Grievance.API.Services.Implementations
             return true;
         }
 
-        // Changed return type to string to match Interface and usage
+        // FIX: Changed return type from object to string
         public string HashPassword(string password)
         {
             using var hmac = new HMACSHA512();
 
-            // Calculate the hash
             byte[] computedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(password));
 
-            // Convert to base64 strings
             string passwordHash = Convert.ToBase64String(computedHash);
             string passwordSalt = Convert.ToBase64String(hmac.Key);
 
-            // Combine salt and hash
             return $"{passwordSalt}.{passwordHash}";
         }
 
@@ -217,7 +210,7 @@ namespace EncoraOne.Grievance.API.Services.Implementations
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
-                new Claim(ClaimTypes.Name, user.FullName), // Important for frontend display
+                new Claim(ClaimTypes.Name, user.FullName),
                 new Claim(ClaimTypes.Role, user.Role.ToString()),
                 new Claim("role", user.Role.ToString())
             };
